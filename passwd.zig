@@ -27,6 +27,93 @@ const IP_INV_SPEC = [64]u8{
     33, 1, 41, 9,  49, 17, 57, 25,
 };
 
+/// Permute the bits of `in` according to `spec`.
+fn permute(in: u64, spec: []const u8) u64 {
+    var out: u64 = 0;
+    for (spec, 0..spec.len) |pos, i| {
+        const bit = (in >> @intCast(64 - pos)) & 1;
+        out |= bit << @intCast(63 - i);
+    }
+    return out;
+}
+
+fn initialPermutation(in: u64) u64 {
+    return permute(in, &IP_SPEC);
+}
+
+fn finalPermutation(in: u64) u64 {
+    return permute(in, &IP_INV_SPEC);
+}
+
+/// Extract the 56-bit key by ignoring the
+//fn reduceKey(key: u64) u64 {}
+
+fn feistel(in: u64, key: u64) u64 {
+    return in | key;
+}
+
+fn cryptCommand(password: []const u8) void {
+    // crypt(3) requires a null-terminated string
+    var pass_buf: [64:0]u8 = undefined;
+    const len = @min(password.len, pass_buf.len - 1);
+    @memcpy(pass_buf[0..len], password[0..len]);
+    pass_buf[len] = 0;
+
+    // Use "aa" as the salt
+    const salt = "aa";
+
+    const result = c.crypt(&pass_buf, salt);
+    if (result == null) {
+        std.debug.print("crypt failed\n", .{});
+        return;
+    }
+
+    // Print the hash
+    const hash = std.mem.span(result);
+    std.debug.print("{s}\n", .{hash});
+}
+
+fn crackCommand(_: []const u8) void {
+    std.debug.print("not implemented\n", .{});
+}
+
+pub fn main() void {
+    const help =
+        \\ Usage:
+        \\   passwd crypt <password>
+        \\   passwd crack <hash>
+        \\
+    ;
+    var args = std.process.args();
+    _ = args.skip(); // skip program name
+
+    var argv: [2][:0]const u8 = undefined;
+    var i: usize = 0;
+
+    while (args.next()) |arg| {
+        if (i >= 2) break;
+        argv[i] = arg;
+        i += 1;
+    }
+
+    if (i < 2) {
+        std.debug.print("{s}", .{help});
+        std.process.exit(1);
+    }
+
+    const command = argv[0];
+    const arg = argv[1];
+
+    if (std.mem.eql(u8, command, "crypt")) {
+        cryptCommand(arg);
+    } else if (std.mem.eql(u8, command, "crack")) {
+        crackCommand(arg);
+    } else {
+        std.debug.print("{s}", .{help});
+        std.process.exit(1);
+    }
+}
+
 test "Permutation specs have every bit position exactly once" {
     var set = std.bit_set.IntegerBitSet(64).initEmpty();
     for (IP_SPEC) |i| {
@@ -39,16 +126,6 @@ test "Permutation specs have every bit position exactly once" {
         set.set(i - 1);
     }
     try std.testing.expect(set.count() == 64);
-}
-
-/// Permute the bits of `in` according to `spec`.
-fn permute(in: u64, spec: []const u8) u64 {
-    var out: u64 = 0;
-    for (spec, 0..spec.len) |pos, i| {
-        const bit = (in >> @intCast(64 - pos)) & 1;
-        out |= bit << @intCast(63 - i);
-    }
-    return out;
 }
 
 test "Permute" {
@@ -69,10 +146,4 @@ test "Permute" {
     const single_bit: u64 = 1 << 63; // MSB set
     const permuted_bit = permute(single_bit, &IP_SPEC);
     try std.testing.expect(@popCount(permuted_bit) == 1); // Should still have exactly one bit
-}
-
-pub fn main() void {
-    const password = "STRANGEL";
-    const hashed = c.crypt(password, "12");
-    std.debug.print("Hashed password: {s}\n", .{hashed});
 }
