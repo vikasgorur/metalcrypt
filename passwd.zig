@@ -27,6 +27,16 @@ const IP_INV_SPEC = [64]u8{
     33, 1, 41, 9,  49, 17, 57, 25,
 };
 
+const DROP_PARITY_BITS_SPEC = [56]u8{
+    57, 49, 41, 33, 25, 17, 9,  1,
+    58, 50, 42, 34, 26, 18, 10, 2,
+    59, 51, 43, 35, 27, 19, 11, 3,
+    60, 52, 44, 36, 63, 55, 47, 39,
+    31, 23, 15, 7,  62, 54, 46, 38,
+    30, 22, 14, 6,  61, 53, 45, 37,
+    29, 21, 13, 5,  28, 20, 12, 4,
+};
+
 /// Permute the bits of `in` according to `spec`.
 fn permute(in: u64, spec: []const u8) u64 {
     var out: u64 = 0;
@@ -45,19 +55,24 @@ fn finalPermutation(in: u64) u64 {
     return permute(in, &IP_INV_SPEC);
 }
 
-/// Extract the 56-bit key by ignoring the
-//fn reduceKey(key: u64) u64 {}
+fn dropParityBits(in: u64) u64 {
+    return permute(in, &DROP_PARITY_BITS_SPEC) >> 8;
+}
 
 fn feistel(in: u64, key: u64) u64 {
     return in | key;
 }
 
 fn cryptCommand(password: []const u8) void {
+    if (password.len != 8) {
+        std.debug.print("password must be exactly 8 characters\n", .{});
+        std.process.exit(1);
+    }
+
     // crypt(3) requires a null-terminated string
-    var pass_buf: [64:0]u8 = undefined;
-    const len = @min(password.len, pass_buf.len - 1);
-    @memcpy(pass_buf[0..len], password[0..len]);
-    pass_buf[len] = 0;
+    var pass_buf: [9:0]u8 = undefined;
+    @memcpy(pass_buf[0..password.len], password[0..password.len]);
+    pass_buf[password.len] = 0;
 
     // Use "aa" as the salt
     const salt = "aa";
@@ -115,17 +130,35 @@ pub fn main() void {
 }
 
 test "Permutation specs have every bit position exactly once" {
-    var set = std.bit_set.IntegerBitSet(64).initEmpty();
+    // We need this to be 65 because the DES standard numbers the bits 1..64.
+    var set = std.bit_set.IntegerBitSet(65).initEmpty();
     for (IP_SPEC) |i| {
-        set.set(i - 1);
+        set.set(i);
     }
     try std.testing.expect(set.count() == 64);
 
-    set = std.bit_set.IntegerBitSet(64).initEmpty();
+    set = std.bit_set.IntegerBitSet(65).initEmpty();
     for (IP_INV_SPEC) |i| {
-        set.set(i - 1);
+        set.set(i);
     }
     try std.testing.expect(set.count() == 64);
+}
+
+test "Drop parity bits ignores every 8th bit" {
+    var bits = std.bit_set.IntegerBitSet(65).initEmpty();
+    for (DROP_PARITY_BITS_SPEC) |i| {
+        bits.set(i);
+    }
+
+    for (1..8) |i| {
+        try std.testing.expect(!bits.isSet(i * 8));
+    }
+}
+
+test "drop parity bits example" {
+    const key = 0b0001001100110100010101110111100110011011101111001101111111110001;
+    const reduced = 0b11110000110011001010101011110101010101100110011110001111;
+    try std.testing.expect(dropParityBits(key) == reduced);
 }
 
 test "Permute" {

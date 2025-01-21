@@ -10,18 +10,11 @@ The steps of the encryption are:
 
     `initialPermutation(in: u64) u64`
 
-2. Break the input into two halves of 32 bits each, call them `left` and `right`.
+2. Key reduction. This is just another permutation that drops every 8th bit (8, 16, ..., 64, "parity bits") thus transforming the 64-bit key into a 56-bit one. This is described by `DROP_PARITY_BITS_SPEC`.
 
-3. Apply the "Feistel (F) function" on left and right in 16 rounds.
+3. Split the 64-bit permuted input into two halves, the left and the right: `L: u32`, `R: u32`.
 
-4. The Feistel function consists of:
-
-    `feistel(in: u64, key: u64) u64`
-
-    a. 
-
-    b. foo
-
+4. We now do 16 rounds of the encryption.
 
 ### Initial and final permutations
 
