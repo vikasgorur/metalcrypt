@@ -14,10 +14,13 @@ The steps of the encryption are:
 (8, 16, ..., 64, "parity bits") thus transforming the 64-bit key into a 56-bit
 one. This is described by `DROP_PARITY_BITS_SPEC`.
 
-3. Split the 64-bit permuted input into two halves, the left and the right:
-`L: u32`, `R: u32`.
+3. Split the 64-bit permuted input into two halves, the left and the right. These
+are also the input to the first round of encryption, so let's call them `L1: u32`
+and `R1: u32`.
 
-4. We now do 16 rounds of the encryption.
+4. We now do 16 rounds of the encryption, numbered 1..16. In each round:
+
+4.1 
 
 ### Initial and final permutations
 

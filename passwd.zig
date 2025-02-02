@@ -2,41 +2,13 @@ const c = @cImport({
     @cInclude("unistd.h");
 });
 const std = @import("std");
+const math = std.math;
+
+const specs = @import("./specs.zig");
 
 // Bit number 1 is always MSB in this file.
 
-const IP_SPEC = [64]u8{
-    58, 50, 42, 34, 26, 18, 10, 2,
-    60, 52, 44, 36, 28, 20, 12, 4,
-    62, 54, 46, 38, 30, 22, 14, 6,
-    64, 56, 48, 40, 32, 24, 16, 8,
-    57, 49, 41, 33, 25, 17, 9,  1,
-    59, 51, 43, 35, 27, 19, 11, 3,
-    61, 53, 45, 37, 29, 21, 13, 5,
-    63, 55, 47, 39, 31, 23, 15, 7,
-};
-
-const IP_INV_SPEC = [64]u8{
-    40, 8, 48, 16, 56, 24, 64, 32,
-    39, 7, 47, 15, 55, 23, 63, 31,
-    38, 6, 46, 14, 54, 22, 62, 30,
-    37, 5, 45, 13, 53, 21, 61, 29,
-    36, 4, 44, 12, 52, 20, 60, 28,
-    35, 3, 43, 11, 51, 19, 59, 27,
-    34, 2, 42, 10, 50, 18, 58, 26,
-    33, 1, 41, 9,  49, 17, 57, 25,
-};
-
-const DROP_PARITY_BITS_SPEC = [56]u8{
-    57, 49, 41, 33, 25, 17, 9,  1,
-    58, 50, 42, 34, 26, 18, 10, 2,
-    59, 51, 43, 35, 27, 19, 11, 3,
-    60, 52, 44, 36, 63, 55, 47, 39,
-    31, 23, 15, 7,  62, 54, 46, 38,
-    30, 22, 14, 6,  61, 53, 45, 37,
-    29, 21, 13, 5,  28, 20, 12, 4,
-};
-
+/// S boxes
 /// Permute the bits of `in` according to `spec`.
 fn permute(in: u64, spec: []const u8) u64 {
     var out: u64 = 0;
@@ -48,19 +20,53 @@ fn permute(in: u64, spec: []const u8) u64 {
 }
 
 fn initialPermutation(in: u64) u64 {
-    return permute(in, &IP_SPEC);
+    return permute(in, &specs.IP_SPEC);
 }
 
 fn finalPermutation(in: u64) u64 {
-    return permute(in, &IP_INV_SPEC);
+    return permute(in, &specs.IP_INV_SPEC);
 }
 
 fn dropParityBits(in: u64) u64 {
-    return permute(in, &DROP_PARITY_BITS_SPEC) >> 8;
+    return permute(in, &specs.DROP_PARITY_BITS_SPEC) >> 8;
 }
 
-fn feistel(in: u64, key: u64) u64 {
-    return in | key;
+// Split the 56-bit key into two 28-bit halves, shift both according to the
+// round schedule and return the combined 56-bit key
+fn keyShift(round: u8, key: u64) u64 {
+    const left = key & 0b0000000011111111111111111111111111110000000000000000000000000000;
+    const right = key & 0b0000000000000000000000000000000000001111111111111111111111111111;
+
+    const shift = @as(usize, specs.KEY_SHIFT_SCHEDULE[round]);
+
+    return (math.rotl(u64, left, shift) << 28) | math.rotl(u64, right, shift);
+}
+
+fn compressionPermutation(key: u64) u64 {
+    return permute(key, &specs.COMPRESSION_SPEC) >> 16;
+}
+
+// Expand the 32-bit right half into 48-bits using the expansion
+// permutation
+fn expansionPermutation(input: u64) u64 {
+    return permute(input, &specs.EXPANSION_SPEC);
+}
+
+fn pBoxPermutation(input: u32) u32 {
+    return permute(input, &specs.P_BOX_SPEC);
+}
+
+fn feistelRound(round: u8, in: u64, key: u64) u64 {
+    const left = in & ((1 << 32) - 1) << 32;
+    const right = in & ((1 << 32) - 1);
+
+    const roundKey = compressionPermutation(keyShift(round, key));
+    const sBoxInput = expansionPermutation(right) ^ roundKey;
+    return left | right ^ sBoxInput;
+}
+
+fn crypt(input: u64) u64 {
+    return input;
 }
 
 fn cryptCommand(password: []const u8) void {
@@ -129,24 +135,24 @@ pub fn main() void {
     }
 }
 
-test "Permutation specs have every bit position exactly once" {
+test "permutation specs have every bit position exactly once" {
     // We need this to be 65 because the DES standard numbers the bits 1..64.
     var set = std.bit_set.IntegerBitSet(65).initEmpty();
-    for (IP_SPEC) |i| {
+    for (specs.IP_SPEC) |i| {
         set.set(i);
     }
     try std.testing.expect(set.count() == 64);
 
     set = std.bit_set.IntegerBitSet(65).initEmpty();
-    for (IP_INV_SPEC) |i| {
+    for (specs.IP_INV_SPEC) |i| {
         set.set(i);
     }
     try std.testing.expect(set.count() == 64);
 }
 
-test "Drop parity bits ignores every 8th bit" {
+test "drop parity bits ignores every 8th bit" {
     var bits = std.bit_set.IntegerBitSet(65).initEmpty();
-    for (DROP_PARITY_BITS_SPEC) |i| {
+    for (specs.DROP_PARITY_BITS_SPEC) |i| {
         bits.set(i);
     }
 
@@ -161,22 +167,22 @@ test "drop parity bits example" {
     try std.testing.expect(dropParityBits(key) == reduced);
 }
 
-test "Permute" {
+test "permute" {
     // Test basic permutation
     const input: u64 = 0x0123456789ABCDEF;
-    const output = permute(input, &IP_SPEC);
+    const output = permute(input, &specs.IP_SPEC);
     try std.testing.expect(output != input); // Should change the value
 
     // Test that permuting twice with inverse specs returns original
-    const restored = permute(output, &IP_INV_SPEC);
+    const restored = permute(output, &specs.IP_INV_SPEC);
     try std.testing.expect(restored == input);
 
     // Test with all bits set
     const all_ones: u64 = 0xFFFFFFFFFFFFFFFF;
-    try std.testing.expect(permute(all_ones, &IP_SPEC) == all_ones);
+    try std.testing.expect(permute(all_ones, &specs.IP_SPEC) == all_ones);
 
     // Test with single bit set
     const single_bit: u64 = 1 << 63; // MSB set
-    const permuted_bit = permute(single_bit, &IP_SPEC);
+    const permuted_bit = permute(single_bit, &specs.IP_SPEC);
     try std.testing.expect(@popCount(permuted_bit) == 1); // Should still have exactly one bit
 }
